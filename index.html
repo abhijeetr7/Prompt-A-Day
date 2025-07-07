@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Prompt-A-Day</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Inter Font -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <!-- Font Awesome for icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f3f4f6; /* Light gray background */
+            color: #374151; /* Dark gray text */
+        }
+        .container {
+            max-width: 960px;
+        }
+        /* Custom scrollbar for better aesthetics */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #e0e0e0;
+            border-radius: 10px;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #9ca3af;
+            border-radius: 10px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #6b7280;
+        }
+        .modal {
+            display: none; /* Hidden by default */
+            position: fixed; /* Stay in place */
+            z-index: 1000; /* Sit on top */
+            left: 0;
+            top: 0;
+            width: 100%; /* Full width */
+            height: 100%; /* Full height */
+            overflow: auto; /* Enable scroll if needed */
+            background-color: rgba(0,0,0,0.4); /* Black w/ opacity */
+            justify-content: center;
+            align-items: center;
+        }
+        .modal-content {
+            background-color: #fefefe;
+            margin: auto;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            max-width: 400px;
+            text-align: center;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col items-center py-8 px-4 sm:px-6 lg:px-8">
+
+    <!-- Main Container -->
+    <div id="app-container" class="container mx-auto bg-white rounded-xl shadow-lg p-6 sm:p-8 lg:p-10 flex flex-col gap-8 w-full">
+
+        <!-- Header -->
+        <header class="text-center mb-6">
+            <h1 class="text-4xl sm:text-5xl font-extrabold text-indigo-700 mb-2">Prompt-A-Day 📓</h1>
+            <p class="text-lg text-gray-600">Daily reflection, creativity, and mindfulness.</p>
+        </header>
+
+        <!-- Loading Indicator -->
+        <div id="loading" class="flex flex-col items-center justify-center p-10">
+            <div class="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-indigo-500"></div>
+            <p class="mt-4 text-lg text-gray-600">Loading your journal...</p>
+        </div>
+
+        <!-- Main Content (hidden until loaded) -->
+        <div id="main-content" class="hidden flex flex-col gap-8">
+
+            <!-- Daily Prompt Section -->
+            <section class="bg-indigo-50 p-6 rounded-lg shadow-md border border-indigo-200">
+                <h2 class="text-2xl font-semibold text-indigo-800 mb-3">Today's Prompt: <span id="current-date" class="text-indigo-600 text-xl"></span></h2>
+                <p id="daily-prompt" class="text-xl font-medium text-gray-800 mb-4"></p>
+                <p id="inspirational-quote" class="text-md italic text-gray-600 mb-4 border-l-4 border-indigo-300 pl-3"></p>
+                <textarea id="answer-box" class="w-full p-4 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none resize-y min-h-[150px] text-gray-700" placeholder="Write your thoughts here..."></textarea>
+                <p class="text-sm text-gray-500 mt-2 text-right">Your entry is saved automatically.</p>
+            </section>
+
+            <!-- Archive Section -->
+            <section class="bg-gray-50 p-6 rounded-lg shadow-md border border-gray-200">
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="text-2xl font-semibold text-gray-800">Journal Archive</h2>
+                    <div class="flex items-center space-x-4">
+                        <button id="toggle-favorites" class="px-4 py-2 bg-yellow-500 text-white rounded-lg shadow-md hover:bg-yellow-600 transition duration-200 ease-in-out flex items-center">
+                            <i class="fas fa-star mr-2"></i> <span id="favorite-text">Show Favorites</span>
+                        </button>
+                        <button id="export-journal" class="px-4 py-2 bg-green-500 text-white rounded-lg shadow-md hover:bg-green-600 transition duration-200 ease-in-out flex items-center">
+                            <i class="fas fa-file-export mr-2"></i> Export
+                        </button>
+                    </div>
+                </div>
+                <div id="archive-list" class="space-y-6 max-h-[500px] overflow-y-auto pr-2">
+                    <!-- Archive entries will be dynamically loaded here -->
+                    <p id="no-archive-message" class="text-center text-gray-500 italic hidden">No journal entries yet. Start writing!</p>
+                </div>
+            </section>
+        </div>
+    </div>
+
+    <!-- Custom Modal for Messages -->
+    <div id="custom-modal" class="modal">
+        <div class="modal-content">
+            <p id="modal-message" class="text-lg font-medium text-gray-700 mb-4"></p>
+            <button id="modal-ok-button" class="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition duration-200 ease-in-out">OK</button>
+        </div>
+    </div>
+
+    <!-- Firebase SDK -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, getDoc, collection, query, onSnapshot, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Global variables for Firebase and app state
+        let app;
+        let db;
+        let auth;
+        let userId = null;
+        let isAuthReady = false;
+        let debounceTimeout;
+        let showFavoritesOnly = false;
+        let allJournalEntries = []; // Store all entries for filtering
+
+        // Get app ID and Firebase config from the environment
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-prompt-a-day-app';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        // UI Elements
+        const loadingElement = document.getElementById('loading');
+        const mainContentElement = document.getElementById('main-content');
+        const dailyPromptElement = document.getElementById('daily-prompt');
+        const inspirationalQuoteElement = document.getElementById('inspirational-quote');
+        const answerBox = document.getElementById('answer-box');
+        const currentDateElement = document.getElementById('current-date');
+        const archiveList = document.getElementById('archive-list');
+        const noArchiveMessage = document.getElementById('no-archive-message');
+        const toggleFavoritesButton = document.getElementById('toggle-favorites');
+        const favoriteText = document.getElementById('favorite-text');
+        const exportJournalButton = document.getElementById('export-journal');
+
+        // Custom Modal Elements
+        const customModal = document.getElementById('custom-modal');
+        const modalMessage = document.getElementById('modal-message');
+        const modalOkButton = document.getElementById('modal-ok-button');
+
+        // --- Data Definitions ---
+        const prompts = [
+            "What is one small thing you can do today to bring more joy into your life?",
+            "Describe a moment recently when you felt truly grateful. What made it special?",
+            "If you could give your past self one piece of advice, what would it be and why?",
+            "What challenge are you currently facing, and what's one step you can take to overcome it?",
+            "Imagine your ideal day. What does it look like, from morning to night?",
+            "What's a skill you'd like to learn or improve, and what's holding you back?",
+            "Write about a person who has significantly impacted your life. What did they teach you?",
+            "What does 'success' mean to you, beyond material achievements?",
+            "If you could travel anywhere in the world, where would you go and why?",
+            "What's a fear you've overcome, and what did you learn from the experience?",
+            "Describe a place where you feel completely at peace. What makes it so calming?",
+            "What's one habit you'd like to cultivate, and how will you start?",
+            "Reflect on a time you failed. What was the lesson learned?",
+            "What's something you're passionate about that you don't talk about enough?",
+            "How do you practice self-care, and what more could you do?",
+            "What's a small act of kindness you witnessed or performed recently?",
+            "If your life were a book, what would be the title of this chapter?",
+            "What's a belief you once held strongly that has since changed?",
+            "Describe a moment when you felt truly proud of yourself.",
+            "What legacy do you hope to leave behind?",
+            "What's a simple pleasure that always brings a smile to your face?",
+            "If you could have dinner with any historical figure, who would it be and what would you ask?",
+            "What does true friendship mean to you?",
+            "How do you handle stress, and what new coping mechanisms could you explore?",
+            "What's a dream you've had that you haven't pursued yet? Why not?",
+            "What's one thing you're looking forward to in the coming week/month?",
+            "Describe a time you stepped out of your comfort zone. What was the outcome?",
+            "What's a piece of art (music, book, painting) that deeply resonates with you?",
+            "How do you define 'happiness' for yourself?",
+            "What's something you've learned about yourself recently?",
+            "If you could change one thing about the world, what would it be?",
+            "What's a goal you're working towards right now, and why is it important to you?",
+            "Describe a beautiful natural landscape you've experienced.",
+            "What's one thing you're good at that you often take for granted?",
+            "How do you recharge when you feel drained?",
+            "What's a valuable lesson you learned from a mistake?",
+            "If you could have any superpower, what would it be and how would you use it?",
+            "What's a cause or issue you care deeply about?",
+            "Describe a memorable meal you've had. What made it special?",
+            "What does 'home' mean to you?",
+            "What's a skill you're grateful to possess?",
+            "How do you show appreciation to others?",
+            "What's a place you've always wanted to visit but haven't yet?",
+            "Describe a moment of unexpected joy.",
+            "What's one thing you'd like to forgive yourself for?",
+            "How do you contribute to your community?",
+            "What's a book or movie that changed your perspective?",
+            "Describe your ideal morning routine.",
+            "What's a piece of advice you often give to others?",
+            "What does 'courage' look like to you?"
+        ];
+
+        const quotes = [
+            "The best way to predict the future is to create it. – Peter Drucker",
+            "The only way to do great work is to love what you do. – Steve Jobs",
+            "Believe you can and you're halfway there. – Theodore Roosevelt",
+            "The future belongs to those who believe in the beauty of their dreams. – Eleanor Roosevelt",
+            "It is during our darkest moments that we must focus to see the light. – Aristotle Onassis",
+            "Strive not to be a success, but rather to be of value. – Albert Einstein",
+            "The mind is everything. What you think you become. – Buddha",
+            "An unexamined life is not worth living. – Socrates",
+            "The only true wisdom is in knowing you know nothing. – Socrates",
+            "Happiness is not something ready made. It comes from your own actions. – Dalai Lama XIV",
+            "The journey of a thousand miles begins with a single step. – Lao Tzu",
+            "What you get by achieving your goals is not as important as what you become by achieving your goals. – Zig Ziglar",
+            "The best revenge is massive success. – Frank Sinatra",
+            "The only limit to our realization of tomorrow will be our doubts of today. – Franklin D. Roosevelt",
+            "It does not matter how slowly you go as long as you do not stop. – Confucius",
+            "Everything you’ve ever wanted is on the other side of fear. – George Addair",
+            "Success is not final, failure is not fatal: it is the courage to continue that counts. – Winston Churchill",
+            "The only impossible journey is the one you never begin. – Tony Robbins",
+            "The secret of getting ahead is getting started. – Mark Twain",
+            "If you want to live a happy life, tie it to a goal, not to people or things. – Albert Einstein"
+        ];
+
+        // --- Helper Functions ---
+
+        /**
+         * Shows a custom modal message.
+         * @param {string} message The message to display.
+         */
+        function showModal(message) {
+            modalMessage.textContent = message;
+            customModal.style.display = 'flex'; // Use flex to center
+        }
+
+        /**
+         * Closes the custom modal.
+         */
+        function closeModal() {
+            customModal.style.display = 'none';
+        }
+
+        /**
+         * Gets the current date in YYYY-MM-DD format.
+         * @returns {string} Current date string.
+         */
+        function getTodayDateString() {
+            const today = new Date();
+            const year = today.getFullYear();
+            const month = String(today.getMonth() + 1).padStart(2, '0');
+            const day = String(today.getDate()).padStart(2, '0');
+            return `${year}-${month}-${day}`;
+        }
+
+        /**
+         * Calculates the day of the year (1-366).
+         * @param {Date} date The date object.
+         * @returns {number} The day of the year.
+         */
+        function getDayOfYear(date) {
+            const start = new Date(date.getFullYear(), 0, 0);
+            const diff = date - start;
+            const oneDay = 1000 * 60 * 60 * 24;
+            return Math.floor(diff / oneDay);
+        }
+
+        /**
+         * Gets the daily prompt based on the current date.
+         * @returns {string} The daily prompt.
+         */
+        function getDailyPrompt() {
+            const today = new Date();
+            const dayOfYear = getDayOfYear(today);
+            return prompts[dayOfYear % prompts.length];
+        }
+
+        /**
+         * Gets a random inspirational quote.
+         * @returns {string} A random quote.
+         */
+        function getRandomQuote() {
+            const randomIndex = Math.floor(Math.random() * quotes.length);
+            return quotes[randomIndex];
+        }
+
+        /**
+         * Debounces a function call.
+         * @param {Function} func The function to debounce.
+         * @param {number} delay The debounce delay in milliseconds.
+         * @returns {Function} The debounced function.
+         */
+        function debounce(func, delay) {
+            return function(...args) {
+                clearTimeout(debounceTimeout);
+                debounceTimeout = setTimeout(() => func.apply(this, args), delay);
+            };
+        }
+
+        /**
+         * Saves the current entry to Firestore.
+         */
+        async function saveEntry() {
+            if (!isAuthReady || !userId) {
+                console.error("Firestore not ready or user not authenticated.");
+                return;
+            }
+
+            const todayDate = getTodayDateString();
+            const currentPrompt = dailyPromptElement.textContent;
+            const currentQuote = inspirationalQuoteElement.textContent;
+            const currentAnswer = answerBox.value;
+
+            try {
+                const docRef = doc(db, `artifacts/${appId}/users/${userId}/journalEntries`, todayDate);
+                // Fetch existing data to preserve isFavorite if it exists
+                const docSnap = await getDoc(docRef);
+                const existingData = docSnap.exists() ? docSnap.data() : {};
+
+                await setDoc(docRef, {
+                    date: todayDate,
+                    prompt: currentPrompt,
+                    answer: currentAnswer,
+                    quote: currentQuote,
+                    isFavorite: existingData.isFavorite || false // Preserve existing favorite status
+                });
+                console.log("Entry saved successfully!");
+            } catch (e) {
+                console.error("Error saving document: ", e);
+                showModal("Error saving your entry. Please try again.");
+            }
+        }
+
+        /**
+         * Toggles the favorite status of an entry.
+         * @param {string} date The date of the entry.
+         * @param {boolean} currentStatus The current favorite status.
+         */
+        async function toggleFavorite(date, currentStatus) {
+            if (!isAuthReady || !userId) {
+                showModal("Authentication not ready. Cannot favorite.");
+                return;
+            }
+            try {
+                const docRef = doc(db, `artifacts/${appId}/users/${userId}/journalEntries`, date);
+                await setDoc(docRef, { isFavorite: !currentStatus }, { merge: true });
+                console.log(`Favorite status toggled for ${date} to ${!currentStatus}`);
+            } catch (e) {
+                console.error("Error toggling favorite: ", e);
+                showModal("Error toggling favorite. Please try again.");
+            }
+        }
+
+        /**
+         * Renders the archive list.
+         * @param {Array} entries The array of journal entries to render.
+         */
+        function renderArchive(entries) {
+            archiveList.innerHTML = ''; // Clear existing entries
+
+            if (entries.length === 0) {
+                noArchiveMessage.classList.remove('hidden');
+                return;
+            } else {
+                noArchiveMessage.classList.add('hidden');
+            }
+
+            // Sort entries by date in descending order
+            entries.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+            entries.forEach(entry => {
+                const entryDiv = document.createElement('div');
+                entryDiv.className = `bg-white p-5 rounded-lg shadow-sm border border-gray-200 transition-all duration-200 ease-in-out ${entry.isFavorite ? 'border-yellow-400 ring-1 ring-yellow-400' : ''}`;
+                entryDiv.innerHTML = `
+                    <div class="flex justify-between items-center mb-2">
+                        <h3 class="text-xl font-semibold text-gray-700">${entry.date}</h3>
+                        <button class="favorite-btn text-xl ${entry.isFavorite ? 'text-yellow-500' : 'text-gray-400 hover:text-yellow-500'}" data-date="${entry.date}" data-favorite="${entry.isFavorite}">
+                            <i class="${entry.isFavorite ? 'fas' : 'far'} fa-star"></i>
+                        </button>
+                    </div>
+                    <p class="text-gray-600 mb-2 italic border-l-2 border-gray-300 pl-2">${entry.prompt}</p>
+                    <div class="text-gray-700 max-h-24 overflow-hidden text-ellipsis whitespace-pre-wrap">
+                        ${entry.answer.length > 200 ? entry.answer.substring(0, 200) + '...' : entry.answer}
+                    </div>
+                    <button class="view-more-btn text-indigo-500 hover:text-indigo-700 mt-2 text-sm" data-date="${entry.date}">
+                        ${entry.answer.length > 200 ? 'View Full Entry' : ''}
+                    </button>
+                `;
+                archiveList.appendChild(entryDiv);
+            });
+
+            // Add event listeners for favorite buttons
+            document.querySelectorAll('.favorite-btn').forEach(button => {
+                button.onclick = (event) => {
+                    const date = event.currentTarget.dataset.date;
+                    const isFavorite = event.currentTarget.dataset.favorite === 'true';
+                    toggleFavorite(date, isFavorite);
+                };
+            });
+
+            // Add event listeners for view full entry buttons
+            document.querySelectorAll('.view-more-btn').forEach(button => {
+                button.onclick = (event) => {
+                    const date = event.currentTarget.dataset.date;
+                    const entry = allJournalEntries.find(e => e.date === date);
+                    if (entry) {
+                        showModal(`
+                            <h3 class="text-xl font-semibold text-gray-700 mb-2">${entry.date}</h3>
+                            <p class="text-gray-600 mb-2 italic border-l-2 border-gray-300 pl-2 text-left">${entry.prompt}</p>
+                            <p class="text-gray-700 text-left whitespace-pre-wrap max-h-80 overflow-y-auto">${entry.answer}</p>
+                        `);
+                    }
+                };
+            });
+        }
+
+        /**
+         * Exports all journal entries as a text file.
+         */
+        function exportJournal() {
+            let exportContent = "Prompt-A-Day Journal Export\n\n";
+            allJournalEntries.sort((a, b) => new Date(a.date) - new Date(b.date)); // Sort chronologically for export
+
+            allJournalEntries.forEach(entry => {
+                exportContent += `--- Date: ${entry.date} ${entry.isFavorite ? '(Favorite)' : ''} ---\n`;
+                exportContent += `Prompt: ${entry.prompt}\n`;
+                if (entry.quote) {
+                    exportContent += `Quote: ${entry.quote}\n`;
+                }
+                exportContent += `Answer:\n${entry.answer}\n\n`;
+            });
+
+            const blob = new Blob([exportContent], { type: 'text/plain;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `Prompt-A-Day-Journal-${getTodayDateString()}.txt`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            showModal("Journal exported successfully as text!");
+        }
+
+        // --- Event Listeners ---
+
+        modalOkButton.addEventListener('click', closeModal);
+
+        answerBox.addEventListener('input', debounce(saveEntry, 1000)); // Save after 1 second of no typing
+
+        toggleFavoritesButton.addEventListener('click', () => {
+            showFavoritesOnly = !showFavoritesOnly;
+            favoriteText.textContent = showFavoritesOnly ? 'Show All' : 'Show Favorites';
+            toggleFavoritesButton.classList.toggle('bg-yellow-500', !showFavoritesOnly);
+            toggleFavoritesButton.classList.toggle('bg-gray-500', showFavoritesOnly);
+            toggleFavoritesButton.classList.toggle('hover:bg-yellow-600', !showFavoritesOnly);
+            toggleFavoritesButton.classList.toggle('hover:bg-gray-600', showFavoritesOnly);
+
+            const filteredEntries = showFavoritesOnly
+                ? allJournalEntries.filter(entry => entry.isFavorite)
+                : allJournalEntries;
+            renderArchive(filteredEntries);
+        });
+
+        exportJournalButton.addEventListener('click', exportJournal);
+
+        // --- Firebase Initialization and Data Loading ---
+        window.onload = async function() {
+            try {
+                // Initialize Firebase
+                app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+
+                // Authenticate user
+                if (initialAuthToken) {
+                    await signInWithCustomToken(auth, initialAuthToken);
+                } else {
+                    await signInAnonymously(auth);
+                }
+
+                onAuthStateChanged(auth, async (user) => {
+                    if (user) {
+                        userId = user.uid;
+                        isAuthReady = true;
+                        console.log("User authenticated:", userId);
+
+                        // Hide loading and show content
+                        loadingElement.classList.add('hidden');
+                        mainContentElement.classList.remove('hidden');
+
+                        // Set today's date, prompt, and quote
+                        const todayDate = getTodayDateString();
+                        currentDateElement.textContent = todayDate;
+                        const dailyPrompt = getDailyPrompt();
+                        dailyPromptElement.textContent = dailyPrompt;
+                        const randomQuote = getRandomQuote();
+                        inspirationalQuoteElement.textContent = `"${randomQuote}"`;
+
+                        // Listen for changes to today's document
+                        const todayDocRef = doc(db, `artifacts/${appId}/users/${userId}/journalEntries`, todayDate);
+                        onSnapshot(todayDocRef, (docSnap) => {
+                            if (docSnap.exists()) {
+                                const data = docSnap.data();
+                                answerBox.value = data.answer || '';
+                                // Ensure prompt and quote are set if not already (e.g., first load)
+                                if (dailyPromptElement.textContent !== data.prompt) {
+                                    dailyPromptElement.textContent = data.prompt;
+                                }
+                                if (inspirationalQuoteElement.textContent !== `"${data.quote}"`) {
+                                    inspirationalQuoteElement.textContent = `"${data.quote}"`;
+                                }
+                            } else {
+                                // If no entry exists for today, initialize it with prompt and quote
+                                answerBox.value = '';
+                                saveEntry(); // Save an empty entry with prompt and quote
+                            }
+                        }, (error) => {
+                            console.error("Error listening to today's document:", error);
+                            showModal("Error loading today's entry. Please refresh.");
+                        });
+
+                        // Listen for changes to the entire journal collection for archive
+                        const journalCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/journalEntries`);
+                        onSnapshot(journalCollectionRef, (snapshot) => {
+                            const entries = [];
+                            snapshot.forEach(doc => {
+                                entries.push(doc.data());
+                            });
+                            allJournalEntries = entries; // Update the global array
+                            const filteredEntries = showFavoritesOnly
+                                ? allJournalEntries.filter(entry => entry.isFavorite)
+                                : allJournalEntries;
+                            renderArchive(filteredEntries);
+                        }, (error) => {
+                            console.error("Error listening to journal collection:", error);
+                            showModal("Error loading journal archive. Please refresh.");
+                        });
+
+                    } else {
+                        isAuthReady = false;
+                        console.log("No user signed in.");
+                        loadingElement.classList.add('hidden');
+                        mainContentElement.classList.remove('hidden');
+                        showModal("Could not authenticate. Please refresh the page.");
+                    }
+                });
+
+            } catch (e) {
+                console.error("Error initializing Firebase or authenticating:", e);
+                loadingElement.classList.add('hidden');
+                mainContentElement.classList.remove('hidden');
+                showModal("Failed to load the application. Please check your internet connection and try again.");
+            }
+        };
+    </script>
+</body>
+</html>
