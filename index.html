@@ -10,6 +10,8 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
     <!-- Font Awesome for icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <!-- jsPDF for PDF export -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <style>
         body {
             font-family: 'Inter', sans-serif;
@@ -56,6 +58,19 @@
             max-width: 400px;
             text-align: center;
         }
+        .modal-content-large {
+            max-width: 700px; /* Larger for full entry view */
+            max-height: 90vh; /* Max height for scrollable content */
+            overflow-y: auto;
+            text-align: left; /* Align text left for entries */
+        }
+        .modal-content-large p {
+            margin-bottom: 10px;
+        }
+        .modal-content-large pre {
+            white-space: pre-wrap; /* Preserve whitespace and wrap */
+            word-wrap: break-word; /* Break long words */
+        }
     </style>
 </head>
 <body class="min-h-screen flex flex-col items-center py-8 px-4 sm:px-6 lg:px-8">
@@ -92,6 +107,7 @@
                 <div class="flex justify-between items-center mb-4">
                     <h2 class="text-2xl font-semibold text-gray-800">Journal Archive</h2>
                     <div class="flex items-center space-x-4">
+                        <input type="text" id="search-input" placeholder="Search entries..." class="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none text-gray-700 w-40 sm:w-auto">
                         <button id="toggle-favorites" class="px-4 py-2 bg-yellow-500 text-white rounded-lg shadow-md hover:bg-yellow-600 transition duration-200 ease-in-out flex items-center">
                             <i class="fas fa-star mr-2"></i> <span id="favorite-text">Show Favorites</span>
                         </button>
@@ -105,12 +121,27 @@
                     <p id="no-archive-message" class="text-center text-gray-500 italic hidden">No journal entries yet. Start writing!</p>
                 </div>
             </section>
+
+            <!-- Prompt Management Section -->
+            <section class="bg-blue-50 p-6 rounded-lg shadow-md border border-blue-200">
+                <h2 class="text-2xl font-semibold text-blue-800 mb-4">Manage Custom Prompts</h2>
+                <div class="flex flex-col sm:flex-row gap-3 mb-4">
+                    <input type="text" id="new-prompt-input" placeholder="Add a new custom prompt..." class="flex-grow p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none text-gray-700">
+                    <button id="add-prompt-btn" class="px-5 py-3 bg-blue-600 text-white rounded-lg shadow-md hover:bg-blue-700 transition duration-200 ease-in-out flex items-center justify-center">
+                        <i class="fas fa-plus mr-2"></i> Add Prompt
+                    </button>
+                </div>
+                <div id="custom-prompts-list" class="space-y-3 max-h-60 overflow-y-auto pr-2">
+                    <!-- Custom prompts will be loaded here -->
+                    <p id="no-custom-prompts-message" class="text-center text-gray-500 italic hidden">No custom prompts added yet.</p>
+                </div>
+            </section>
         </div>
     </div>
 
     <!-- Custom Modal for Messages -->
     <div id="custom-modal" class="modal">
-        <div class="modal-content">
+        <div class="modal-content" id="modal-content">
             <p id="modal-message" class="text-lg font-medium text-gray-700 mb-4"></p>
             <button id="modal-ok-button" class="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition duration-200 ease-in-out">OK</button>
         </div>
@@ -120,7 +151,7 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, setDoc, getDoc, collection, query, onSnapshot, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, doc, setDoc, getDoc, collection, query, onSnapshot, deleteDoc, addDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // Global variables for Firebase and app state
         let app;
@@ -131,6 +162,7 @@
         let debounceTimeout;
         let showFavoritesOnly = false;
         let allJournalEntries = []; // Store all entries for filtering
+        let customPrompts = []; // Store custom prompts
 
         // Get app ID and Firebase config from the environment
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-prompt-a-day-app';
@@ -149,14 +181,20 @@
         const toggleFavoritesButton = document.getElementById('toggle-favorites');
         const favoriteText = document.getElementById('favorite-text');
         const exportJournalButton = document.getElementById('export-journal');
+        const searchInput = document.getElementById('search-input');
+        const newPromptInput = document.getElementById('new-prompt-input');
+        const addPromptBtn = document.getElementById('add-prompt-btn');
+        const customPromptsList = document.getElementById('custom-prompts-list');
+        const noCustomPromptsMessage = document.getElementById('no-custom-prompts-message');
 
         // Custom Modal Elements
         const customModal = document.getElementById('custom-modal');
+        const modalContent = document.getElementById('modal-content'); // Get the modal content div
         const modalMessage = document.getElementById('modal-message');
         const modalOkButton = document.getElementById('modal-ok-button');
 
         // --- Data Definitions ---
-        const prompts = [
+        const defaultPrompts = [
             "What is one small thing you can do today to bring more joy into your life?",
             "Describe a moment recently when you felt truly grateful. What made it special?",
             "If you could give your past self one piece of advice, what would it be and why?",
@@ -237,9 +275,17 @@
         /**
          * Shows a custom modal message.
          * @param {string} message The message to display.
+         * @param {string} type 'small' for simple messages, 'large' for full entry view.
          */
-        function showModal(message) {
-            modalMessage.textContent = message;
+        function showModal(message, type = 'small') {
+            modalMessage.innerHTML = message; // Use innerHTML to allow for more complex content
+            modalContent.classList.remove('modal-content-large'); // Reset classes
+            modalContent.classList.remove('modal-content'); // Reset classes
+            if (type === 'large') {
+                modalContent.classList.add('modal-content-large');
+            } else {
+                modalContent.classList.add('modal-content');
+            }
             customModal.style.display = 'flex'; // Use flex to center
         }
 
@@ -248,6 +294,7 @@
          */
         function closeModal() {
             customModal.style.display = 'none';
+            modalMessage.innerHTML = ''; // Clear message
         }
 
         /**
@@ -275,13 +322,17 @@
         }
 
         /**
-         * Gets the daily prompt based on the current date.
+         * Gets the daily prompt based on the current date, combining default and custom prompts.
          * @returns {string} The daily prompt.
          */
         function getDailyPrompt() {
+            const allAvailablePrompts = [...defaultPrompts, ...customPrompts.map(p => p.text)];
+            if (allAvailablePrompts.length === 0) {
+                return "No prompts available. Add some custom prompts!";
+            }
             const today = new Date();
             const dayOfYear = getDayOfYear(today);
-            return prompts[dayOfYear % prompts.length];
+            return allAvailablePrompts[dayOfYear % allAvailablePrompts.length];
         }
 
         /**
@@ -361,7 +412,28 @@
         }
 
         /**
-         * Renders the archive list.
+         * Filters journal entries based on the search term and favorite status.
+         * @returns {Array} Filtered entries.
+         */
+        function getFilteredEntries() {
+            let filtered = allJournalEntries;
+            const searchTerm = searchInput.value.toLowerCase();
+
+            if (showFavoritesOnly) {
+                filtered = filtered.filter(entry => entry.isFavorite);
+            }
+
+            if (searchTerm) {
+                filtered = filtered.filter(entry =>
+                    entry.prompt.toLowerCase().includes(searchTerm) ||
+                    entry.answer.toLowerCase().includes(searchTerm)
+                );
+            }
+            return filtered;
+        }
+
+        /**
+         * Renders the archive list with date grouping.
          * @param {Array} entries The array of journal entries to render.
          */
         function renderArchive(entries) {
@@ -377,12 +449,27 @@
             // Sort entries by date in descending order
             entries.sort((a, b) => new Date(b.date) - new Date(a.date));
 
+            let currentYearMonth = '';
+
             entries.forEach(entry => {
+                const entryDate = new Date(entry.date);
+                const yearMonth = `${entryDate.getFullYear()}-${String(entryDate.getMonth() + 1).padStart(2, '0')}`;
+
+                if (yearMonth !== currentYearMonth) {
+                    currentYearMonth = yearMonth;
+                    const monthName = entryDate.toLocaleString('default', { month: 'long' });
+                    const year = entryDate.getFullYear();
+                    const groupHeader = document.createElement('h3');
+                    groupHeader.className = 'text-xl font-bold text-gray-700 mt-6 mb-3 border-b-2 border-gray-300 pb-1 sticky top-0 bg-gray-50 z-10';
+                    groupHeader.textContent = `${monthName} ${year}`;
+                    archiveList.appendChild(groupHeader);
+                }
+
                 const entryDiv = document.createElement('div');
                 entryDiv.className = `bg-white p-5 rounded-lg shadow-sm border border-gray-200 transition-all duration-200 ease-in-out ${entry.isFavorite ? 'border-yellow-400 ring-1 ring-yellow-400' : ''}`;
                 entryDiv.innerHTML = `
                     <div class="flex justify-between items-center mb-2">
-                        <h3 class="text-xl font-semibold text-gray-700">${entry.date}</h3>
+                        <h4 class="text-lg font-semibold text-gray-700">${entry.date}</h4>
                         <button class="favorite-btn text-xl ${entry.isFavorite ? 'text-yellow-500' : 'text-gray-400 hover:text-yellow-500'}" data-date="${entry.date}" data-favorite="${entry.isFavorite}">
                             <i class="${entry.isFavorite ? 'fas' : 'far'} fa-star"></i>
                         </button>
@@ -415,40 +502,144 @@
                     if (entry) {
                         showModal(`
                             <h3 class="text-xl font-semibold text-gray-700 mb-2">${entry.date}</h3>
-                            <p class="text-gray-600 mb-2 italic border-l-2 border-gray-300 pl-2 text-left">${entry.prompt}</p>
-                            <p class="text-gray-700 text-left whitespace-pre-wrap max-h-80 overflow-y-auto">${entry.answer}</p>
-                        `);
+                            <p class="text-gray-600 mb-2 italic border-l-2 border-gray-300 pl-2"><strong>Prompt:</strong> ${entry.prompt}</p>
+                            <p class="text-gray-600 mb-4 italic border-l-2 border-gray-300 pl-2"><strong>Quote:</strong> "${entry.quote}"</p>
+                            <p class="text-gray-700 whitespace-pre-wrap"><strong>Answer:</strong>\n${entry.answer}</p>
+                        `, 'large'); // Pass 'large' to use the larger modal style
                     }
                 };
             });
         }
 
         /**
-         * Exports all journal entries as a text file.
+         * Exports all journal entries as a text file or PDF.
          */
-        function exportJournal() {
-            let exportContent = "Prompt-A-Day Journal Export\n\n";
+        async function exportJournal() {
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF();
+            let yPos = 10;
+            const margin = 10;
+            const lineHeight = 7;
+            const pageHeight = doc.internal.pageSize.height;
+
+            doc.setFontSize(18);
+            doc.text("Prompt-A-Day Journal Export", margin, yPos);
+            yPos += 15;
+
+            doc.setFontSize(12);
+
             allJournalEntries.sort((a, b) => new Date(a.date) - new Date(b.date)); // Sort chronologically for export
 
-            allJournalEntries.forEach(entry => {
-                exportContent += `--- Date: ${entry.date} ${entry.isFavorite ? '(Favorite)' : ''} ---\n`;
-                exportContent += `Prompt: ${entry.prompt}\n`;
-                if (entry.quote) {
-                    exportContent += `Quote: ${entry.quote}\n`;
+            for (const entry of allJournalEntries) {
+                if (yPos + 4 * lineHeight > pageHeight - margin) { // Check if new page is needed
+                    doc.addPage();
+                    yPos = margin;
                 }
-                exportContent += `Answer:\n${entry.answer}\n\n`;
+
+                doc.setFontSize(14);
+                doc.text(`--- Date: ${entry.date} ${entry.isFavorite ? '(Favorite)' : ''} ---`, margin, yPos);
+                yPos += lineHeight;
+
+                doc.setFontSize(12);
+                doc.text(`Prompt: ${entry.prompt}`, margin, yPos);
+                yPos += lineHeight;
+
+                if (entry.quote) {
+                    doc.text(`Quote: "${entry.quote}"`, margin, yPos);
+                    yPos += lineHeight;
+                }
+
+                doc.text("Answer:", margin, yPos);
+                yPos += lineHeight;
+
+                const splitAnswer = doc.splitTextToSize(entry.answer, doc.internal.pageSize.width - 2 * margin);
+                doc.text(splitAnswer, margin, yPos);
+                yPos += splitAnswer.length * lineHeight;
+                yPos += lineHeight * 2; // Add some space between entries
+            }
+
+            doc.save(`Prompt-A-Day-Journal-${getTodayDateString()}.pdf`);
+            showModal("Journal exported successfully as PDF!");
+        }
+
+        /**
+         * Renders the list of custom prompts.
+         */
+        function renderCustomPrompts() {
+            customPromptsList.innerHTML = '';
+            if (customPrompts.length === 0) {
+                noCustomPromptsMessage.classList.remove('hidden');
+                return;
+            } else {
+                noCustomPromptsMessage.classList.add('hidden');
+            }
+
+            customPrompts.forEach(prompt => {
+                const promptDiv = document.createElement('div');
+                promptDiv.className = 'flex items-center justify-between bg-white p-3 rounded-lg shadow-sm border border-blue-100';
+                promptDiv.innerHTML = `
+                    <p class="text-gray-700 flex-grow mr-4">${prompt.text}</p>
+                    <button class="delete-prompt-btn text-red-500 hover:text-red-700 text-lg" data-id="${prompt.id}">
+                        <i class="fas fa-trash-alt"></i>
+                    </button>
+                `;
+                customPromptsList.appendChild(promptDiv);
             });
 
-            const blob = new Blob([exportContent], { type: 'text/plain;charset=utf-8' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `Prompt-A-Day-Journal-${getTodayDateString()}.txt`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-            showModal("Journal exported successfully as text!");
+            // Add event listeners for delete buttons
+            document.querySelectorAll('.delete-prompt-btn').forEach(button => {
+                button.onclick = (event) => {
+                    const promptId = event.currentTarget.dataset.id;
+                    deleteCustomPrompt(promptId);
+                };
+            });
+        }
+
+        /**
+         * Adds a new custom prompt to Firestore.
+         */
+        async function addCustomPrompt() {
+            if (!isAuthReady || !userId) {
+                showModal("Authentication not ready. Cannot add prompt.");
+                return;
+            }
+            const newPromptText = newPromptInput.value.trim();
+            if (newPromptText === '') {
+                showModal("Prompt cannot be empty.");
+                return;
+            }
+
+            try {
+                const docRef = await addDoc(collection(db, `artifacts/${appId}/users/${userId}/customPrompts`), {
+                    text: newPromptText,
+                    createdAt: new Date().toISOString()
+                });
+                console.log("Custom prompt added with ID: ", docRef.id);
+                newPromptInput.value = ''; // Clear input
+                showModal("Custom prompt added successfully!");
+            } catch (e) {
+                console.error("Error adding custom prompt: ", e);
+                showModal("Error adding custom prompt. Please try again.");
+            }
+        }
+
+        /**
+         * Deletes a custom prompt from Firestore.
+         * @param {string} promptId The ID of the prompt to delete.
+         */
+        async function deleteCustomPrompt(promptId) {
+            if (!isAuthReady || !userId) {
+                showModal("Authentication not ready. Cannot delete prompt.");
+                return;
+            }
+            try {
+                await deleteDoc(doc(db, `artifacts/${appId}/users/${userId}/customPrompts`, promptId));
+                console.log("Custom prompt deleted successfully!");
+                showModal("Custom prompt deleted.");
+            } catch (e) {
+                console.error("Error deleting custom prompt: ", e);
+                showModal("Error deleting custom prompt. Please try again.");
+            }
         }
 
         // --- Event Listeners ---
@@ -456,6 +647,11 @@
         modalOkButton.addEventListener('click', closeModal);
 
         answerBox.addEventListener('input', debounce(saveEntry, 1000)); // Save after 1 second of no typing
+
+        searchInput.addEventListener('input', () => {
+            const filteredEntries = getFilteredEntries();
+            renderArchive(filteredEntries);
+        });
 
         toggleFavoritesButton.addEventListener('click', () => {
             showFavoritesOnly = !showFavoritesOnly;
@@ -465,13 +661,13 @@
             toggleFavoritesButton.classList.toggle('hover:bg-yellow-600', !showFavoritesOnly);
             toggleFavoritesButton.classList.toggle('hover:bg-gray-600', showFavoritesOnly);
 
-            const filteredEntries = showFavoritesOnly
-                ? allJournalEntries.filter(entry => entry.isFavorite)
-                : allJournalEntries;
+            const filteredEntries = getFilteredEntries();
             renderArchive(filteredEntries);
         });
 
         exportJournalButton.addEventListener('click', exportJournal);
+
+        addPromptBtn.addEventListener('click', addCustomPrompt);
 
         // --- Firebase Initialization and Data Loading ---
         window.onload = async function() {
@@ -498,16 +694,8 @@
                         loadingElement.classList.add('hidden');
                         mainContentElement.classList.remove('hidden');
 
-                        // Set today's date, prompt, and quote
-                        const todayDate = getTodayDateString();
-                        currentDateElement.textContent = todayDate;
-                        const dailyPrompt = getDailyPrompt();
-                        dailyPromptElement.textContent = dailyPrompt;
-                        const randomQuote = getRandomQuote();
-                        inspirationalQuoteElement.textContent = `"${randomQuote}"`;
-
                         // Listen for changes to today's document
-                        const todayDocRef = doc(db, `artifacts/${appId}/users/${userId}/journalEntries`, todayDate);
+                        const todayDocRef = doc(db, `artifacts/${appId}/users/${userId}/journalEntries`, getTodayDateString());
                         onSnapshot(todayDocRef, (docSnap) => {
                             if (docSnap.exists()) {
                                 const data = docSnap.data();
@@ -537,14 +725,36 @@
                                 entries.push(doc.data());
                             });
                             allJournalEntries = entries; // Update the global array
-                            const filteredEntries = showFavoritesOnly
-                                ? allJournalEntries.filter(entry => entry.isFavorite)
-                                : allJournalEntries;
+                            const filteredEntries = getFilteredEntries(); // Apply current filters
                             renderArchive(filteredEntries);
                         }, (error) => {
                             console.error("Error listening to journal collection:", error);
                             showModal("Error loading journal archive. Please refresh.");
                         });
+
+                        // Listen for changes to custom prompts collection
+                        const customPromptsCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/customPrompts`);
+                        onSnapshot(customPromptsCollectionRef, (snapshot) => {
+                            customPrompts = [];
+                            snapshot.forEach(doc => {
+                                customPrompts.push({ id: doc.id, ...doc.data() });
+                            });
+                            renderCustomPrompts();
+                            // Re-set today's prompt in case custom prompts changed and affected the selection
+                            const todayDate = getTodayDateString();
+                            currentDateElement.textContent = todayDate;
+                            dailyPromptElement.textContent = getDailyPrompt();
+                            inspirationalQuoteElement.textContent = `"${getRandomQuote()}"`;
+                        }, (error) => {
+                            console.error("Error listening to custom prompts collection:", error);
+                            showModal("Error loading custom prompts. Please refresh.");
+                        });
+
+                        // Initial set of today's prompt and quote (will be updated by onSnapshot if entry exists)
+                        const todayDate = getTodayDateString();
+                        currentDateElement.textContent = todayDate;
+                        dailyPromptElement.textContent = getDailyPrompt();
+                        inspirationalQuoteElement.textContent = `"${getRandomQuote()}"`;
 
                     } else {
                         isAuthReady = false;
